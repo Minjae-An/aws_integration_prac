@@ -1,0 +1,48 @@
+name: Deploy Node App (OIDC + S3 + SSM)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write       
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials via OIDC
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::564610076649:role/github-actions-aws-integration-role
+        aws-region: ap-northeast-2
+
+    - name: Zip the application
+      run: |
+        zip -r app.zip . -x '*.git*' 'node_modules/*' '.github/*'
+
+    - name: Upload to S3
+      run: |
+        aws s3 cp app.zip s3://my-node-app-deploy-bucket/app.zip
+
+    - name: Deploy on EC2 via SSM
+      run: |
+        aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --instance-ids "i-041dbd22f78c7cb20" \
+          --region ap-northeast-2 \
+          --comment "Deploy Node App" \
+          --parameters commands='[
+            "mkdir -p /home/ubuntu/app-deploy",
+            "aws s3 cp s3://my-node-app-deploy-bucket/app.zip /home/ubuntu/app-deploy/app.zip",
+            "unzip -o /home/ubuntu/app-deploy/app.zip -d /home/ubuntu/app-deploy/app",
+            "cd /home/ubuntu/app-deploy/app",
+            "npm install",
+            "pm2 delete all || true",
+            "pm2 start index.js --name my-node-app"
+          ]'
